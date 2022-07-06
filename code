@@ -1,0 +1,176 @@
+import json
+import os
+import googleapiclient.discovery
+from apiclient.discovery import build
+from youtube_transcript_api import YouTubeTranscriptApi
+from pprint import pprint
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+from nltk.probability import FreqDist
+from nltk.sentiment.vader import SentimentIntensityAnalyzer 
+from textblob import Word, TextBlob
+import matplotlib.pyplot as plt
+plt.rcParams['figure.figsize'] = (17, 7)
+plt.rcParams.update({'font.size': 14})
+import pandas as pd
+import seaborn as sns
+import re
+
+import warnings
+warnings.filterwarnings('ignore')
+config_file_name = "config.json"
+def build_youtube(API_KEY):
+    # not exactly sure why we need to include this? 
+    # necessary for running on local host
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    api_service_name = "youtube"
+    api_version = "v3"
+    DEVELOPER_KEY = API_KEY
+    
+    youtube = googleapiclient.discovery.build(
+        api_service_name, api_version, developerKey=DEVELOPER_KEY)
+    return youtube
+
+def search_videos(youtube, channel_id, page_token):
+    request = youtube.search().list(
+        part="snippet", 
+        channelId=channel_id,
+        type="video",
+        MaxResult=50,
+        page_Token=page_token
+    )
+    response = request.execute()
+    return response
+
+def search_comments(youtube, video_id, page_token):
+    request = youtube.commentThreads().list(
+        part="snippet",
+        videoId=video_id,
+        maxResults=50,
+        pageToken=page_token
+    )
+    response = request.execute()
+    return response
+
+def process_comments_responses(response):
+    next_page_token= response.get("nextPageToken")
+    result = []
+    for i, item in enumerate(response["items"]):
+        comment = item["snippet"]["topLevelComment"]
+        author = comment["snippet"]["authorDisplayName"]
+        comment_text = comment["snippet"]["textDisplay"]
+        author_id = comment["snippet"]["authorChannelId"]["value"]
+        result.append(
+            {
+                "author": author,
+                "comment_text": comment_text, 
+                "author_id": author_id
+            }
+        )
+    return next_page_token, result
+def search_transcript(youtube, video_id):
+    response = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+    print('\n'+"Video: "+"https://www.youtube.com/watch?v="+str(video_id)+'\n'+'\n'+"Captions:")
+    # text = response['text']
+    print(response)
+    
+    # response = request.execute()
+    return response
+
+def search_description(youtube, video_id):
+    response = youtube.videos().list(id=video_id, part='snippet').execute()
+    for item in response.get('items', []):
+        description = item['snippet']['description']
+        #print (result['snippet']['title'])
+    # response = request.execute()
+    return description
+
+def search_title(youtube, video_id):
+    response = youtube.videos().list(id=video_id, part='snippet').execute()
+    print(response)
+    for item in response.get('items', []):
+        #print result['id']
+        title = item['snippet']['title']
+        #print (result['snippet']['title'])
+    # response = request.execute()
+    print(title)
+    return title
+
+api_key = "AIzaSyCm0bNcZy9j-0KxxmmRoYGpSurp5M9SNqg"
+video_id = "0eKVizvYSUQ"
+
+youtube = build_youtube(api_key)
+comments = []
+next_page = None
+while True:
+    response = search_comments(youtube, video_id, next_page)
+    next_page, result = process_comments_responses(response)
+    comments += result
+    if not next_page:
+        break
+comments
+response = search_transcript(youtube, video_id)
+unfilteredTranscript = []
+for j in response:
+    unfilteredTranscript.append(j['text'])
+filteredTranscript = ' '.join(unfilteredTranscript)
+comments.append(
+    {
+        "author": "transcript",
+        "comment_text": filteredTranscript, 
+        "author_id": 123456789
+   }
+)
+response = search_description(youtube, video_id)
+comments.append(
+    {
+        "author": "description",
+        "comment_text": response,
+        "author_id": 987654321
+   }
+)
+response = search_title(youtube, video_id)
+comments.append(
+    {
+        "author": "title",
+        "comment_text": response,
+        "author_id": 111111111
+   }
+)
+print(comments)
+
+# download stopwords & punkt
+nltk.download('stopwords')
+nltk.download('punkt')
+nltk.download('vader_lexicon')
+stop_words = set(stopwords.words('english'))
+#stop_words.add('gun')
+#stop_words.add('control')
+df = pd.DataFrame(comments)
+df
+df.shape
+df.isnull().sum()
+def preprocess(response, stop_words):
+    preprocess_response = response
+    preprocess_response = preprocess_response.lower()
+    preprocess_response = re.sub(r'\n|[^a-zA-Z]', ' ', preprocess_response)
+    preprocess_response = preprocess_response.split()
+    preprocess_response = ' '.join(word for word in preprocess_response if word not in stop_words)
+    return preprocess_response
+# get rid of all punctuations
+# lower cases
+df['process_comment_text'] = df['comment_text'].apply(lambda x: preprocess(x, stop_words))
+# tokenization
+df['process_comment_text_token'] = df['process_comment_text'].apply(word_tokenize)
+# stemming
+ps = PorterStemmer()
+df['process_comment_text_token'] = df['process_comment_text_token'].apply(
+    lambda x: [ps.stem(y) for y in x])
+df.head(10)
+# frequency of words
+single_word = df['process_comment_text_token'].apply(pd.Series).stack()
+fdist_most = FreqDist(single_word)
+fdist_most.plot(50, cumulative=False);
+fdist_most
